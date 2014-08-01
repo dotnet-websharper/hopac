@@ -13,16 +13,24 @@ namespace WebSharper.Hopac
 
 open System
 open System.Collections.Generic
+open IntelliFactory.WebSharper
+
+type A<'T> = Hopac.Alt<'T>
+type J<'T> = Hopac.Job<'T>
 
 [<AbstractClass>]
+[<JavaScript>]
+[<Proxy(typeof<Hopac.Job<_>>)>]
 type Job<'T> () =
     abstract Run : ('T -> unit) -> unit
 
+[<JavaScript>]
 [<Sealed>]
 type PrimJob<'T> (run) =
     inherit Job<'T> ()
     override jb.Run k = run k
 
+[<JavaScript>]
 [<Sealed>]
 type BindJob<'A,'B> (x: Job<'A>, f: 'A -> Job<'B>) =
     inherit Job<'B> ()
@@ -34,18 +42,36 @@ type BindJob<'A,'B> (x: Job<'A>, f: 'A -> Job<'B>) =
                 Executor.spawn (fun () ->
                     y.Run k)))
 
+[<JavaScript>]
 [<Sealed>]
 type ResultJob<'T> (x: 'T) =
     inherit Job<'T> ()
     override j.Run k = k x
 
+[<AutoOpen>]
+module JobNotation =
+
+    [<Inline "$0">]
+    [<M(MO.NoInlining)>]
+    let ( !+ ) (j: Job<'T>) : J<'T> = U
+
+    [<Inline "$0">]
+    [<M(MO.NoInlining)>]
+    let ( !- ) (j: J<'T>) : Job<'T> = U
+
+[<JavaScript>]
+[<Proxy "Hopac.Job, Hopac">]
 module Job =
 
-    let result x = ResultJob x :> Job<_>
+    let result x = !+ (ResultJob x)
     let unit () = result ()
 
+    [<Proxy "Hopac.Job.Infixes, Hopac">]
     module Infixes =
-        let ( >>= ) x f = BindJob (x, f) :> Job<_>
+
+        let ( >>= ) x (f: _ -> J<_>) =
+            !+ (BindJob (!-x, fun x -> !- (f x)))
+
         let ( >>. ) a b = a >>= fun _ -> b
         let ( .>> ) a b = a >>= fun x -> b >>= fun _ -> result x
         let ( |>> ) x f = x >>= fun x -> result (f x)
@@ -55,35 +81,41 @@ module Job =
 
     let thunk f = result () |>> f
 
-    let delay (f: unit -> Job<'T>) =
-        PrimJob (fun kont -> f().Run(kont)) :> Job<_>
+    let delay (f: unit -> J<'T>) =
+        !+ PrimJob(fun kont -> (!- f()).Run kont)
 
+    [<Proxy "Hopac.Job.Global, Hopac">]
     module Global =
 
-        let start (job: Job<_>) =
-            Executor.spawn (fun () -> job.Run ignore)
+        let start job =
+            Executor.spawn (fun () -> (!-job).Run ignore)
+
+    let start job =
+        thunk (fun () -> Global.start job)
 
 open Job.Infixes
 
+[<JavaScript>]
+[<Proxy(typeof<Hopac.JobBuilder>)>]
 [<Sealed>]
 type JobBuilder () =
 
     member jb.Return (v: 'T) = Job.result v
-    member jb.ReturnFrom (j: Job<'T>) = j
+    member jb.ReturnFrom (j: J<'T>) = j
     member jb.Bind (a, f) = a >>= f
-    member jb.Combine (a: Job<unit>, b: Job<'T>) = a >>. b
+    member jb.Combine (a: J<unit>, b: J<'T>) = a >>. b
     member jb.Delay f = Job.delay f
 
-    member jb.While (cond: unit -> bool, job: Job<unit>) =
-        PrimJob (fun k ->
+    member jb.While (cond: unit -> bool, job: J<unit>) : J<unit> =
+        !+ PrimJob(fun k ->
             let rec loop () =
                 if cond () then
-                    Executor.spawn (fun () -> job.Run loop)
+                    Executor.spawn (fun () -> (!- job).Run loop)
                 else
                     Executor.spawn k
-            loop ()) :> Job<_>
+            loop ())
 
-    member jb.For (xs: seq<'T>, f: 'T -> Job<unit>) =
+    member jb.For (xs: seq<'T>, f: 'T -> J<unit>) =
         jb {
             let e = xs.GetEnumerator ()
             while e.MoveNext () do
@@ -97,12 +129,13 @@ type JobBuilder () =
         Job.result ()
 
 [<AutoOpen>]
-module JobNotation =
+[<JavaScript>]
+module JobNotation2 =
     let job = JobBuilder ()
 
 type Transaction<'T> =
     {
-        Cont : 'T -> Job<unit>
+        Cont : 'T -> J<unit>
         IsActive : ref<bool>
         Resources : Queue<IDisposable>
         Select : int -> unit
@@ -114,8 +147,10 @@ type Exit<'T> =
         Tr : Transaction<'T>
     }
 
+[<JavaScript>]
 module Transaction =
 
+    [<M(MO.NoInlining)>]
     let create k set =
         {
             Cont = k
@@ -124,9 +159,11 @@ module Transaction =
             Select = set
         }
 
+    [<M(MO.NoInlining)>]
     let attach tr res =
         tr.Resources.Enqueue res
 
+    [<M(MO.NoInlining)>]
     let mapJob f tr =
         let k = tr.Cont
         {
@@ -140,8 +177,10 @@ module Transaction =
             Select = tr.Select
         }
 
+[<JavaScript>]
 module Exit =
 
+    [<M(MO.NoInlining)>]
     let create i t =
         { Ix = i; Tr = t }
 
@@ -152,6 +191,7 @@ module Exit =
         tr.Select index
         Job.Global.start (tr.Cont v)
 
+    [<M(MO.NoInlining)>]
     let mapJob f e =
         { Ix = e.Ix; Tr = Transaction.mapJob f e.Tr }
 
@@ -162,26 +202,29 @@ type Branch<'T> =
         Sync : ('T -> unit) -> unit
     }
 
+[<JavaScript>]
 module Branch =
 
     let mapJob f b =
         {
             Poll = b.Poll
             Suspend = fun e -> b.Suspend (Exit.mapJob f e)
-            Sync = fun k -> b.Sync (fun v -> f(v).Run(k))
+            Sync = fun k -> b.Sync (fun v -> (!-f(v)).Run(k))
         }
 
 [<AbstractClass>]
+[<JavaScript>]
+[<Proxy(typeof<Hopac.Alt<_>>)>]
 type Alt<'T> () =
     inherit Job<'T> ()
 
-    abstract Init : selected: Alt<int> -> pos: int -> Job<Branch<'T>[]>
+    abstract Init : selected: A<int> -> pos: int -> J<Branch<'T>[]>
 
     override alt.Run cont =
         let job =
             job {
                 let selected = IVar<int>()
-                let! events = alt.Init selected 0
+                let! events = alt.Init (As<A<int>> selected) 0
                 return (
                     let picked =
                         events
@@ -199,9 +242,12 @@ type Alt<'T> () =
                         events.[i].Sync cont
                 )
             }
-        job.Run ignore
+        (!-job).Run ignore
 
-and [<Sealed>] IVar<'T> () =
+and [<JavaScript>]
+    [<Sealed>]
+    [<Proxy(typeof<Hopac.IVar<_>>)>]
+    IVar<'T> () =
     inherit Alt<'T> ()
 
     let mutable isReady = false
@@ -227,6 +273,18 @@ and [<Sealed>] IVar<'T> () =
         |> Array.iter (fun e -> Exit.throw e v)
         conts <- U
 
+[<AutoOpen>]
+module AltNotation =
+
+    [<Inline "$0">]
+    [<M(MO.NoInlining)>]
+    let ( !+? ) (x: Alt<'T>) : A<'T> = U
+
+    [<Inline "$0">]
+    [<M(MO.NoInlining)>]
+    let ( !-? ) (x: A<'T>) : Alt<'T> = U
+
+[<JavaScript>]
 [<Sealed>]
 type AlwaysAlt<'T> (v: 'T) =
     inherit Alt<'T> ()
@@ -241,6 +299,7 @@ type AlwaysAlt<'T> (v: 'T) =
     override alt.Init _ _ =
         Job.result self
 
+[<JavaScript>]
 [<Sealed>]
 type NeverAlt<'T> () =
     inherit Alt<'T> ()
@@ -249,6 +308,7 @@ type NeverAlt<'T> () =
     override alt.Init _ _ =
         Job.result Array.empty
 
+[<JavaScript>]
 [<Sealed>]
 type ChoiceAlt<'T> (a: Alt<'T>, b: Alt<'T>) =
     inherit Alt<'T> ()
@@ -260,8 +320,9 @@ type ChoiceAlt<'T> (a: Alt<'T>, b: Alt<'T>) =
             return Array.append xs ys
         }
 
+[<JavaScript>]
 [<Sealed>]
-type ChooseAlt<'T> (xs: Alt<'T>[]) =
+type ChooseAlt<'T> (xs: A<'T>[]) =
     inherit Alt<'T> ()
 
     override alt.Init st pos =
@@ -269,24 +330,26 @@ type ChooseAlt<'T> (xs: Alt<'T>[]) =
             let out = ResizeArray ()
             let pos = ref pos
             for x in xs do
-                let! br = x.Init st !pos
+                let! br = (!-? x).Init st !pos
                 do out.AddRange br
                 do pos := !pos + br.Length
             return out.ToArray ()
         }
 
+[<JavaScript>]
 [<Sealed>]
-type GuardAlt<'T> (guard: Job<Alt<'T>>) =
+type GuardAlt<'T> (guard: J<A<'T>>) =
     inherit Alt<'T> ()
 
     override alt.Init st pos =
         job {
             let! alt = guard
-            return! alt.Init st pos
+            return! (!-? alt).Init st pos
         }
 
+[<JavaScript>]
 [<Sealed>]
-type WrapAlt<'A,'B> (a: Alt<'A>, f: 'A -> Job<'B>) =
+type WrapAlt<'A,'B> (a: Alt<'A>, f: 'A -> J<'B>) =
     inherit Alt<'B> ()
 
     override alt.Init st pos =
@@ -295,171 +358,194 @@ type WrapAlt<'A,'B> (a: Alt<'A>, f: 'A -> Job<'B>) =
             return Array.map (Branch.mapJob f) br
         }
 
+[<JavaScript>]
 [<Sealed>]
-type WithNackAlt<'T> (f: Alt<unit> -> Job<Alt<'T>>) =
+type WithNackAlt<'T> (f: A<unit> -> J<A<'T>>) =
     inherit Alt<'T> ()
 
     override alt.Init choice pos =
         let nack =
             let e =
-                choice
+                As<J<int>> choice
                 |>> fun c ->
                     if c <> pos
-                        then AlwaysAlt () :> Alt<_>
-                        else NeverAlt () :> Alt<_>
-            GuardAlt e :> Alt<_>
+                        then !+? AlwaysAlt()
+                        else !+? NeverAlt()
+            !+? (GuardAlt e)
         job {
             let! x = f nack
-            return! x.Init choice pos
+            return! (!-? x).Init choice pos
         }
 
+[<JavaScript>]
+[<Proxy "Hopac.Alt, Hopac">]
 module Alt =
-    let always v = AlwaysAlt v :> Alt<_>
-    let never () = NeverAlt () :> Alt<_>
-    let pick (alt: Alt<'T>) = alt :> Job<'T>
+    let always v = !+? (AlwaysAlt v)
+    let never () = !+? (NeverAlt ())
+    let pick (alt: A<'T>) : J<'T> = As alt
     let unit () = always ()
-    let zero () = never () : Alt<unit>
-    let choose xs = ChooseAlt (Seq.toArray xs) :> Alt<_>
-    let select xs = pick (choose xs)
-    let guard g = GuardAlt g :> Alt<_>
-    let delay f = guard (Job.thunk f)
-    let withNack f = WithNackAlt f :> Alt<_>
+    let zero () = never () : A<unit>
 
+    let choose xs = !+? ChooseAlt(Seq.toArray xs)
+    let select xs = pick (choose xs)
+    let guard g = !+? (GuardAlt g)
+    let delay f = guard (Job.thunk f)
+    let withNack f = !+? (WithNackAlt f)
+
+    [<Proxy "Hopac.Alt.Infixes, Hopac">]
     module Infixes =
-        let ( <|> ) a b = ChoiceAlt (a, b) :> Alt<_>
-        let ( >>=? ) x f = WrapAlt (x, f) :> Alt<_>
+        let ( <|> ) a b = !+? ChoiceAlt(!-? a, !-? b)
+        let ( >>=? ) x f = !+? WrapAlt(!-? x, f)
         let ( >>.? ) a b = a >>=? fun _ -> b
         let ( .>>? ) x y = x >>=? fun x -> y >>% x
         let ( |>>? ) x f = x >>=? fun x -> Job.result (f x)
         let ( >>%? ) x v = x >>=? fun _ -> Job.result v
 
-/// Channels ---------------------------------------------------------------
-
-[<Sealed>]
-type ChanQueue<'T> (isActive: 'T -> bool) =
-
-    let mutable qu = Queue<'T> ()
-
-    member q.Enqueue (v: 'T) = qu.Enqueue v
-    member q.Dequeue () = qu.Dequeue ()
-    member q.ToArray () = qu.ToArray ()
-
-    interface IDisposable with
-
-        /// Drops all inactive items.
-        member q.Dispose () =
-            let r = Queue<'T> ()
-            qu.ToArray ()
-            |> Array.iter (fun item ->
-                if isActive item then
-                    r.Enqueue item)
-            qu <- r
-
-type Chan<'T> =
-    {
-        mutable Balance : int
-        Readers : ChanQueue<Exit<'T>>
-        Writers : ChanQueue<'T * Exit<unit>>
-    }
-
-module Chan =
-
-    let tip ch d =
-        ch.Balance <- ch.Balance + d
-
-    let send ch v =
-        if ch.Balance < 0 then
-            let e = ch.Readers.Dequeue ()
-            Exit.throw e v
-        else
-            let t = Transaction.create (fun _ -> Job.result ()) ignore
-            let e = Exit.create 0 t
-            ch.Writers.Enqueue (v, e)
-        tip ch 1
-
-    let addReader ch value ex =
-        tip ch 1
-        ch.Writers.Enqueue (value, ex)
-        Transaction.attach ex.Tr ch.Writers
-
-    let addWriter ch ex =
-        tip ch -1
-        ch.Readers.Enqueue ex
-        Transaction.attach ex.Tr ch.Readers
-
-    let removeReader ch =
-        tip ch 1
-        ch.Readers.Dequeue ()
-
-    let removeWriter ch =
-        tip ch -1
-        ch.Writers.Dequeue ()
-
-    let create () =
-        {
-            Balance = 0
-            Readers = new ChanQueue<Exit<'T>>(fun e -> e.Tr.IsActive.Value)
-            Writers = new ChanQueue<'T * Exit<unit>>(fun (_, e) -> e.Tr.IsActive.Value)
-        }
-
-type Ch<'T> (st: Chan<'T>) =
-    inherit Alt<'T> ()
-
-    let take =
-        [|{
-            Poll = fun () -> st.Balance > 0
-            Suspend = Chan.addWriter st
-            Sync = fun cont ->
-                let (value, e) = Chan.removeWriter st
-                Exit.throw e ()
-                cont value
-        }|]
-
-    member ch.Chan = st
-
-    override alt.Init _ _ =
-        Job.result take
-
-[<Sealed>]
-type GiveAlt<'T> (ch: Chan<'T>, value: 'T) =
-    inherit Alt<unit> ()
-
-    let give =
-        [|{
-            Poll = fun () -> ch.Balance < 0
-            Suspend = Chan.addReader ch value
-            Sync = fun cont ->
-                let e = Chan.removeReader ch
-                Exit.throw e value
-                cont ()
-        }|]
-
-    override alt.Init _ _ =
-        Job.result give
-
-module Ch =
-    module A = Alt
-
-    let (|Ch|) (ch: Ch<'T>) = ch.Chan
-
-    module Now =
-        let create () = Ch (Chan.create ())
-
-    module Global =
-        let send (Ch chan) v = Chan.send chan v
-
-    let create () =
-        job { return Now.create () }
-
-    module Alt =
-        let give (Ch chan) value = GiveAlt (chan, value) :> Alt<_>
-        let take (ch: Ch<'T>) = ch :> Alt<'T>
-
-    let give ch v = A.pick (Alt.give ch v)
-    let take (ch: Ch<'T>) = A.pick ch
-    let send ch v = job { return Global.send ch v }
-
-[<AutoOpen>]
-module TopLevel =
-
-    let job = JobBuilder ()
+///// Channels ---------------------------------------------------------------
+//
+//[<JavaScript>]
+//[<Sealed>]
+//type ChanQueue<'T> (isActive: 'T -> bool) =
+//
+//    let mutable qu = Queue<'T> ()
+//
+//    member q.Enqueue (v: 'T) = qu.Enqueue v
+//    member q.Dequeue () = qu.Dequeue ()
+//    member q.ToArray () = qu.ToArray ()
+//
+//    interface IDisposable with
+//
+//        /// Drops all inactive items.
+//        member q.Dispose () =
+//            let r = Queue<'T> ()
+//            qu.ToArray ()
+//            |> Array.iter (fun item ->
+//                if isActive item then
+//                    r.Enqueue item)
+//            qu <- r
+//
+//type Chan<'T> =
+//    {
+//        mutable Balance : int
+//        Readers : ChanQueue<Exit<'T>>
+//        Writers : ChanQueue<'T * Exit<unit>>
+//    }
+//
+//[<JavaScript>]
+//module Chan =
+//
+//    [<M(MO.NoInlining)>]
+//    let tip ch d =
+//        ch.Balance <- ch.Balance + d
+//
+//    let send ch v =
+//        if ch.Balance < 0 then
+//            let e = ch.Readers.Dequeue ()
+//            Exit.throw e v
+//        else
+//            let t = Transaction.create (fun _ -> Job.result ()) ignore
+//            let e = Exit.create 0 t
+//            ch.Writers.Enqueue (v, e)
+//        tip ch 1
+//
+//    let addReader ch value ex =
+//        tip ch 1
+//        ch.Writers.Enqueue (value, ex)
+//        Transaction.attach ex.Tr ch.Writers
+//
+//    let addWriter ch ex =
+//        tip ch -1
+//        ch.Readers.Enqueue ex
+//        Transaction.attach ex.Tr ch.Readers
+//
+//    let removeReader ch =
+//        tip ch 1
+//        ch.Readers.Dequeue ()
+//
+//    let removeWriter ch =
+//        tip ch -1
+//        ch.Writers.Dequeue ()
+//
+//    [<M(MO.NoInlining)>]
+//    let create () =
+//        {
+//            Balance = 0
+//            Readers = new ChanQueue<Exit<'T>>(fun e -> e.Tr.IsActive.Value)
+//            Writers = new ChanQueue<'T * Exit<unit>>(fun (_, e) -> e.Tr.IsActive.Value)
+//        }
+//
+//[<JavaScript>]
+//[<Proxy(typeof<Hopac.Ch<_>>)>]
+//type Ch<'T> (st: Chan<'T>) =
+//    inherit Alt<'T> ()
+//
+//    let take =
+//        [|{
+//            Poll = fun () -> st.Balance > 0
+//            Suspend = Chan.addWriter st
+//            Sync = fun cont ->
+//                let (value, e) = Chan.removeWriter st
+//                Exit.throw e ()
+//                cont value
+//        }|]
+//
+//    member ch.Chan = st
+//
+//    override alt.Init _ _ =
+//        Job.result take
+//
+//[<JavaScript>]
+//[<Sealed>]
+//type GiveAlt<'T> (ch: Chan<'T>, value: 'T) =
+//    inherit Alt<unit> ()
+//
+//    let give =
+//        [|{
+//            Poll = fun () -> ch.Balance < 0
+//            Suspend = Chan.addReader ch value
+//            Sync = fun cont ->
+//                let e = Chan.removeReader ch
+//                Exit.throw e value
+//                cont ()
+//        }|]
+//
+//    override alt.Init _ _ =
+//        Job.result give
+//
+//[<JavaScript>]
+//[<Proxy "Hopac.Ch, Hopac">]
+//module Ch =
+//    module A = Alt
+//
+//    [<M(MO.NoInlining)>]
+//    let (|Ch|) (ch: Ch<'T>) =
+//        ch.Chan
+//
+//    [<Proxy "Hopac.Ch.Now, Hopac">]
+//    module Now =
+//
+//        [<M(MO.NoInlining)>]
+//        let create () = Ch (Chan.create ())
+//
+//    [<Proxy "Hopac.Ch.Global, Hopac">]
+//    module Global =
+//        let send (Ch chan) v = Chan.send chan v
+//
+//    [<M(MO.NoInlining)>]
+//    let create () =
+//        job { return Now.create () }
+//
+//    [<Proxy "Hopac.Ch.Alt, Hopac">]
+//    module Alt =
+//        let give (Ch chan) value = GiveAlt (chan, value) :> Alt<_>
+//        let take (ch: Ch<'T>) = ch :> Alt<'T>
+//
+//    let give ch v = A.pick (Alt.give ch v)
+//    let take (ch: Ch<'T>) = A.pick ch
+//    let send ch v = job { return Global.send ch v }
+//
+//[<AutoOpen>]
+//[<JavaScript>]
+//[<Proxy "Hopac.TopLevel, Hopac">]
+//module TopLevel =
+//    let job = JobBuilder ()

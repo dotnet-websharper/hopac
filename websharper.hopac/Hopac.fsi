@@ -11,86 +11,75 @@
 
 namespace WebSharper.Hopac
 
-[<AbstractClass>]
-type Job<'T> =
-    abstract internal Run : ('T -> unit) -> unit
+type internal J<'T> = Hopac.Job<'T>
 
-module Job =
+module internal Job =
+
     module Global  =
-        val start : Job<'T> -> unit
+        val start : J<'T> -> unit
 
-    val thunk : (unit -> 'T) -> Job<'T>
-    val unit : unit -> Job<unit>
-    val result : 'T -> Job<'T>
+    val start : J<'T> -> J<unit>
+    val thunk : (unit -> 'T) -> J<'T>
+    val unit : unit -> J<unit>
+    val result : 'T -> J<'T>
 
     module Infixes =
-        val ( >>= ) : Job<'A> -> ('A -> Job<'B>) -> Job<'B>
-        val ( >>. ) : Job<'A> -> Job<'B> -> Job<'B>
-        val ( .>> ) : Job<'A> -> Job<'B> -> Job<'A>
-        val ( |>> ) : Job<'A> -> ('A -> 'B) -> Job<'B>
+        val ( >>= ) : J<'A> -> ('A -> J<'B>) -> J<'B>
+        val ( >>. ) : J<'A> -> J<'B> -> J<'B>
+        val ( .>> ) : J<'A> -> J<'B> -> J<'A>
+        val ( |>> ) : J<'A> -> ('A -> 'B) -> J<'B>
 
-type JobBuilder
+type internal JobBuilder
 
 type JobBuilder with
     new : unit -> JobBuilder
-    member Bind : Job<'A> * ('A -> Job<'B>) -> Job<'B>
-    member Combine : Job<unit> * Job<'T> -> Job<'T>
-    member Delay : (unit -> Job<'T>) -> Job<'T>
-    member For : seq<'T> * ('T -> Job<unit>) -> Job<unit>
-    member For : array<'T> * ('T -> Job<unit>) -> Job<unit>
-    member Return : 'T -> Job<'T>
-    member ReturnFrom : Job<'T> -> Job<'T>
-    member While : (unit -> bool) * Job<unit> -> Job<unit>
-    member Zero : unit -> Job<unit>
+    member Bind : J<'A> * ('A -> J<'B>) -> J<'B>
+    member Combine : J<unit> * J<'T> -> J<'T>
+    member Delay : (unit -> J<'T>) -> J<'T>
+    member For : seq<'T> * ('T -> J<unit>) -> J<unit>
+    member For : array<'T> * ('T -> J<unit>) -> J<unit>
+    member Return : 'T -> J<'T>
+    member ReturnFrom : J<'T> -> J<'T>
+    member While : (unit -> bool) * J<unit> -> J<unit>
+    member Zero : unit -> J<unit>
 
-type internal Branch<'T>
+type internal A<'T> = Hopac.Alt<'T>
 
-[<AbstractClass>]
-type Alt<'T> =
-    inherit Job<'T>
-    abstract internal Init : selected: Alt<int> -> pos: int -> Job<Branch<'T>[]>
-
-[<Sealed>]
-type IVar<'T> =
-    class inherit Alt<'T> end
-
-module Alt =
-    val always : 'T -> Alt<'T>
-    val unit : unit -> Alt<unit>
-    val never : unit -> Alt<'T>
-    val zero : unit -> Alt<unit>
-    val guard : Job<Alt<'T>> -> Alt<'T>
-    val delay : (unit -> Alt<'T>) -> Alt<'T>
-    val withNack : (Alt<unit> -> Job<Alt<'T>>) -> Alt<'T>
-    val choose : seq<Alt<'T>> -> Alt<'T>
+module internal Alt =
+    val always : 'T -> A<'T>
+    val unit : unit -> A<unit>
+    val never : unit -> A<'T>
+    val zero : unit -> A<unit>
+    val guard : J<A<'T>> -> A<'T>
+    val delay : (unit -> A<'T>) -> A<'T>
+    val withNack : (A<unit> -> J<A<'T>>) -> A<'T>
+    val choose : seq<A<'T>> -> A<'T>
     module Infixes =
-        val ( <|> ) : Alt<'T> -> Alt<'T> -> Alt<'T>
-        val ( >>=? ) : Alt<'A> -> ('A -> Job<'B>) -> Alt<'B>
-        val ( >>.? ) : Alt<_> -> Job<'T> -> Alt<'T>
-        val ( .>>? ) : Alt<'T> -> Job<_> -> Alt<'T>
-        val ( |>>? ) : Alt<'A> -> ('A -> 'B) -> Alt<'B>
-        val ( >>%? ) : Alt<'A> -> 'B -> Alt<'B>
-//        val ( >>!? ) : Alt<'T> -> exn -> Alt<_>
-//    val tryIn : Alt<'T> -> ('T -> Job<'B>) -> (exn -> Job<'B>) -> Alt<'B>
-    val pick : Alt<'T> -> Job<'T>
-    val select : seq<Alt<'T>> -> Job<'T>
+        val ( <|> ) : A<'T> -> A<'T> -> A<'T>
+        val ( >>=? ) : A<'A> -> ('A -> J<'B>) -> A<'B>
+        val ( >>.? ) : A<_> -> J<'T> -> A<'T>
+        val ( .>>? ) : A<'T> -> J<_> -> A<'T>
+        val ( |>>? ) : A<'A> -> ('A -> 'B) -> A<'B>
+        val ( >>%? ) : A<'A> -> 'B -> A<'B>
+    val pick : A<'T> -> J<'T>
+    val select : seq<A<'T>> -> J<'T>
 
-type Ch<'T> =
-    class inherit Alt<'T> end
-
-module Ch  =
-    module Now =
-        val create : unit -> Ch<'T>
-    module Alt =
-        val give : Ch<'T> -> 'T -> Alt<unit>
-        val take : Ch<'T> -> Alt<'T>
-    module Global =
-        val send : Ch<'T> -> 'T -> unit
-    val create : unit -> Job<Ch<'T>>
-    val give : Ch<'T> -> 'T -> Job<unit>
-    val send : Ch<'T> -> 'T -> Job<unit>
-    val take : Ch<'T> -> Job<'T>
-
-[<AutoOpen>]
-module TopLevel =
-    val job : JobBuilder
+//type Ch<'T> =
+//    class inherit Alt<'T> end
+//
+//module Ch  =
+//    module Now =
+//        val create : unit -> Ch<'T>
+//    module Alt =
+//        val give : Ch<'T> -> 'T -> Alt<unit>
+//        val take : Ch<'T> -> Alt<'T>
+//    module Global =
+//        val send : Ch<'T> -> 'T -> unit
+//    val create : unit -> Job<Ch<'T>>
+//    val give : Ch<'T> -> 'T -> Job<unit>
+//    val send : Ch<'T> -> 'T -> Job<unit>
+//    val take : Ch<'T> -> Job<'T>
+//
+//[<AutoOpen>]
+//module TopLevel =
+//    val job : JobBuilder

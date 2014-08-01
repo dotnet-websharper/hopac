@@ -11,21 +11,27 @@
 
 namespace WebSharper.Hopac
 
+open System.Runtime.CompilerServices
+open IntelliFactory.WebSharper
+
 [<AutoOpen>]
+[<JavaScript>]
 module internal Util =
 
+    type M = MethodImplAttribute
+    type MO = MethodImplOptions
     let U<'T> = Unchecked.defaultof<'T>
 
-    module Array =
-
-        let balancedReduce f zero arr =
-            let len = Array.length arr
-            match len with
-            | 0 -> zero
-            | 1 -> arr.[0]
-            | _ ->
-                let rec loop off len =
-                    if len = 1 then arr.[off] else
-                        let l2 = len / 2
-                        f (loop off l2) (loop (off + l2) (len - l2))
-                loop 0 len
+//    module Array =
+//
+//        let balancedReduce f zero arr =
+//            let len = Array.length arr
+//            match len with
+//            | 0 -> zero
+//            | 1 -> arr.[0]
+//            | _ ->
+//                let rec loop off len =
+//                    if len = 1 then arr.[off] else
+//                        let l2 = len / 2
+//                        f (loop off l2) (loop (off + l2) (len - l2))
+//                loop 0 len

@@ -7,6 +7,7 @@
     <ProjectGuid>{4a24592e-b6c7-4663-92cc-5d8004df3f46}</ProjectGuid>
     <WebSharperProject>Library</WebSharperProject>
     <NuGetPackageImportStamp>a424bb19</NuGetPackageImportStamp>
+    <TargetFrameworkProfile />
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
     <DebugSymbols>true</DebugSymbols>
@@ -28,7 +29,7 @@
     <Name>WebSharper.Hopac</Name>
     <RootNamespace>$(Name)</RootNamespace>
     <AssemblyName>$(Name)</AssemblyName>
-    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.5.1</TargetFrameworkVersion>
     <WarningLevel>3</WarningLevel>
   </PropertyGroup>
   <!-- F# targets -->
@@ -45,7 +46,7 @@
     </Otherwise>
   </Choose>
   <Import Project="$(FSharpTargetsPath)" />
-  <!--<Import Project="..\packages\WebSharper.2.5.118.53\build\WebSharper.targets" Condition="Exists('..\packages\WebSharper.2.5.118.53\build\WebSharper.targets')" />-->
+  <Import Project="..\packages\WebSharper.2.5.118.53\build\WebSharper.targets" Condition="Exists('..\packages\WebSharper.2.5.118.53\build\WebSharper.targets')" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>
       <ErrorText>This project references NuGet package(s) that are missing on this computer. Enable NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
@@ -57,9 +58,21 @@
     <Compile Include="Executor.fs" />
     <Compile Include="Hopac.fsi" />
     <Compile Include="Hopac.fs" />
+    <Content Include="Main.fs" />
+    <None Include="App.config">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
+    <Reference Include="Hopac">
+      <HintPath>..\packages\Hopac.0.0.0.23\lib\net451\Hopac.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="Hopac.Core">
+      <HintPath>..\packages\Hopac.0.0.0.23\lib\net451\Hopac.Core.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="mscorlib" />
     <Reference Include="System" />
     <Reference Include="System.Core" />

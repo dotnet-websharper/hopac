@@ -1,1 +1,5 @@
+*.suo
+Content
+bin
+obj
 packages
