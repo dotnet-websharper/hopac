@@ -171,6 +171,29 @@ module Branch =
             Sync = fun k -> b.Sync (fun v -> f(v).Run(k))
         }
 
+[<Sealed>]
+type ChanQueue<'T> (isActive: 'T -> bool) =
+    let mutable qu = Queue<'T> ()
+
+    member q.IsEmpty = qu.Count = 0
+    member q.Enqueue (v: 'T) = qu.Enqueue v
+    member q.Dequeue () = qu.Dequeue ()
+    member q.ToArray () = qu.ToArray ()
+
+    /// Drops all inactive items.
+    member q.Clear () =
+        let items = qu.ToArray ()
+        if Array.exists (isActive >> not) items then
+            let r = Queue<'T> ()
+            qu.ToArray ()
+            |> Array.iter (fun item ->
+                if isActive item then
+                    r.Enqueue item)
+            qu <- r
+
+    interface IDisposable with
+        member q.Dispose () = q.Clear ()
+
 [<AbstractClass>]
 type Alt<'T> () =
     inherit Job<'T> ()
@@ -206,12 +229,14 @@ and [<Sealed>] IVar<'T> () =
 
     let mutable isReady = false
     let mutable state = U
-    let mutable conts = ResizeArray<Exit<'T>> ()
+    let mutable conts = new ChanQueue<Exit<'T>> (fun ex -> !ex.Tr.IsActive)
 
     let self =
         [|{
             Poll = fun () -> isReady
-            Suspend = conts.Add
+            Suspend = fun ex ->
+                conts.Enqueue ex
+                Transaction.attach ex.Tr conts
             Sync = fun k -> k state
         }|]
 
@@ -339,29 +364,6 @@ module Alt =
         let ( >>%? ) x v = x >>=? fun _ -> Job.result v
 
 /// Channels ---------------------------------------------------------------
-
-[<Sealed>]
-type ChanQueue<'T> (isActive: 'T -> bool) =
-    let mutable qu = Queue<'T> ()
-
-    member q.IsEmpty = qu.Count = 0
-    member q.Enqueue (v: 'T) = qu.Enqueue v
-    member q.Dequeue () = qu.Dequeue ()
-    member q.ToArray () = qu.ToArray ()
-
-    /// Drops all inactive items.
-    member q.Clear () =
-        let items = qu.ToArray ()
-        if Array.exists (isActive >> not) items then
-            let r = Queue<'T> ()
-            qu.ToArray ()
-            |> Array.iter (fun item ->
-                if isActive item then
-                    r.Enqueue item)
-            qu <- r
-
-    interface IDisposable with
-        member q.Dispose () = q.Clear ()
 
 type Chan<'T> =
     {

@@ -7,6 +7,7 @@
     <ProjectGuid>{4a24592e-b6c7-4663-92cc-5d8004df3f46}</ProjectGuid>
     <WebSharperProject>Library</WebSharperProject>
     <NuGetPackageImportStamp>a424bb19</NuGetPackageImportStamp>
+    <TargetFrameworkProfile />
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
     <DebugSymbols>true</DebugSymbols>
@@ -24,11 +25,11 @@
     <DefineConstants>TRACE</DefineConstants>
   </PropertyGroup>
   <PropertyGroup>
-    <OutputType>Library</OutputType>
+    <OutputType>Exe</OutputType>
     <Name>WebSharper.Hopac</Name>
     <RootNamespace>$(Name)</RootNamespace>
     <AssemblyName>$(Name)</AssemblyName>
-    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.5.1</TargetFrameworkVersion>
     <WarningLevel>3</WarningLevel>
   </PropertyGroup>
   <!-- F# targets -->
@@ -57,9 +58,21 @@
     <Compile Include="Executor.fs" />
     <Compile Include="Hopac.fsi" />
     <Compile Include="Hopac.fs" />
+    <Compile Include="Main.fs" />
+    <None Include="App.config">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
+    <Reference Include="Hopac">
+      <HintPath>..\packages\Hopac.0.0.0.23\lib\net451\Hopac.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="Hopac.Core">
+      <HintPath>..\packages\Hopac.0.0.0.23\lib\net451\Hopac.Core.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="mscorlib" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
