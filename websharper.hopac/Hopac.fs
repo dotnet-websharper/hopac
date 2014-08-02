@@ -67,7 +67,7 @@ module Job =
     let result x = !+ (ResultJob x)
     let unit () = result ()
 
-    [<Proxy "Hopac.Job.Infixes, Hopac">]
+    [<Proxy "Hopac.Job+Infixes, Hopac">]
     module Infixes =
 
         let ( >>= ) x (f: _ -> J<_>) =
@@ -85,12 +85,15 @@ module Job =
     let delay (f: unit -> J<'T>) =
         !+ PrimJob(fun kont -> (!- f()).Run kont)
 
-    [<Proxy "Hopac.Job.Global, Hopac">]
+    [<JavaScript>]
+    [<Proxy "Hopac.Job+Global, Hopac">]
     module Global =
 
-        let start job =
+        [<M(MO.NoInlining)>]
+        let start (job: J<'T>) : unit =
             Executor.spawn (fun () -> (!-job).Run ignore)
 
+    [<M(MO.NoInlining)>]
     let start job =
         thunk (fun () -> Global.start job)
 
@@ -425,7 +428,7 @@ module Alt =
     let delay f = guard (Job.thunk f)
     let withNack f = !+? (WithNackAlt f)
 
-    [<Proxy "Hopac.Alt.Infixes, Hopac">]
+    [<Proxy "Hopac.Alt+Infixes, Hopac">]
     module Infixes =
         let ( <|> ) a b = !+? ChoiceAlt(!-? a, !-? b)
         let ( >>=? ) x f = !+? WrapAlt(!-? x, f)
@@ -515,18 +518,18 @@ module Ch =
     let ( !-- ) (a: C<'T>) = As<Ch<'T>> a
     let (|Ch|) (ch: C<'T>) = (!--ch).Chan
 
-    [<Proxy "Hopac.Ch.Now, Hopac">]
+    [<Proxy "Hopac.Ch+Now, Hopac">]
     module Now =
         let create () = !++ Ch(Chan.create ())
 
-    [<Proxy "Hopac.Ch.Global, Hopac">]
+    [<Proxy "Hopac.Ch+Global, Hopac">]
     module Global =
         let send (Ch chan) v = Chan.send chan v
 
     let create () =
         job { return Now.create () }
 
-    [<Proxy "Hopac.Ch.Alt, Hopac">]
+    [<Proxy "Hopac.Ch+Alt, Hopac">]
     module Alt =
         let give (Ch chan) value = !+? GiveAlt(chan, value)
         let take (ch: C<'T>) = As<A<'T>> ch
