@@ -16,6 +16,7 @@ open System.Collections.Generic
 open IntelliFactory.WebSharper
 
 type A<'T> = Hopac.Alt<'T>
+type C<'T> = Hopac.Ch<'T>
 type J<'T> = Hopac.Job<'T>
 
 [<AbstractClass>]
@@ -212,6 +213,30 @@ module Branch =
             Sync = fun k -> b.Sync (fun v -> (!-f(v)).Run(k))
         }
 
+[<JavaScript>]
+[<Sealed>]
+type ChanQueue<'T> (isActive: 'T -> bool) =
+    let mutable qu = Queue<'T> ()
+
+    member q.IsEmpty = qu.Count = 0
+    member q.Enqueue v = qu.Enqueue v
+    member q.Dequeue () = qu.Dequeue ()
+    member q.ToArray () = qu.ToArray ()
+
+    /// Drops all inactive items.
+    member q.Clear () =
+        let items = qu.ToArray ()
+        if Array.exists (isActive >> not) items then
+            let r = Queue<'T> ()
+            qu.ToArray ()
+            |> Array.iter (fun item ->
+                if isActive item then
+                    r.Enqueue item)
+            qu <- r
+
+    interface IDisposable with
+        member q.Dispose () = q.Clear ()
+
 [<AbstractClass>]
 [<JavaScript>]
 [<Proxy(typeof<Hopac.Alt<_>>)>]
@@ -233,7 +258,7 @@ type Alt<'T> () =
                     | None ->
                         let tr =
                             selected.Fill
-                            |> Transaction.create (fun v -> job { return cont v})
+                            |> Transaction.create (fun v -> job { return cont v })
                         events
                         |> Array.iteri (fun i ev ->
                             ev.Suspend (Exit.create i tr))
@@ -252,12 +277,14 @@ and [<JavaScript>]
 
     let mutable isReady = false
     let mutable state = U
-    let mutable conts = ResizeArray<Exit<'T>> ()
+    let mutable conts = new ChanQueue<Exit<'T>> (fun ex -> !ex.Tr.IsActive)
 
     let self =
         [|{
             Poll = fun () -> isReady
-            Suspend = conts.Add
+            Suspend = fun ex ->
+                conts.Enqueue ex
+                Transaction.attach ex.Tr conts
             Sync = fun k -> k state
         }|]
 
@@ -359,20 +386,26 @@ type WrapAlt<'A,'B> (a: Alt<'A>, f: 'A -> J<'B>) =
         }
 
 [<JavaScript>]
+module Nacks =
+
+    let createAlt (choice: A<int>) (pos: int) =
+        let res = IVar ()
+        job {
+            let! c = choice
+            if c <> pos then
+                return res.Fill ()
+        }
+        |> Job.Global.start
+        !+? res
+
+[<JavaScript>]
 [<Sealed>]
 type WithNackAlt<'T> (f: A<unit> -> J<A<'T>>) =
     inherit Alt<'T> ()
 
     override alt.Init choice pos =
-        let nack =
-            let e =
-                As<J<int>> choice
-                |>> fun c ->
-                    if c <> pos
-                        then !+? AlwaysAlt()
-                        else !+? NeverAlt()
-            !+? (GuardAlt e)
         job {
+            let nack = Nacks.createAlt choice pos
             let! x = f nack
             return! (!-? x).Init choice pos
         }
@@ -401,151 +434,109 @@ module Alt =
         let ( |>>? ) x f = x >>=? fun x -> Job.result (f x)
         let ( >>%? ) x v = x >>=? fun _ -> Job.result v
 
-///// Channels ---------------------------------------------------------------
-//
-//[<JavaScript>]
-//[<Sealed>]
-//type ChanQueue<'T> (isActive: 'T -> bool) =
-//
-//    let mutable qu = Queue<'T> ()
-//
-//    member q.Enqueue (v: 'T) = qu.Enqueue v
-//    member q.Dequeue () = qu.Dequeue ()
-//    member q.ToArray () = qu.ToArray ()
-//
-//    interface IDisposable with
-//
-//        /// Drops all inactive items.
-//        member q.Dispose () =
-//            let r = Queue<'T> ()
-//            qu.ToArray ()
-//            |> Array.iter (fun item ->
-//                if isActive item then
-//                    r.Enqueue item)
-//            qu <- r
-//
-//type Chan<'T> =
-//    {
-//        mutable Balance : int
-//        Readers : ChanQueue<Exit<'T>>
-//        Writers : ChanQueue<'T * Exit<unit>>
-//    }
-//
-//[<JavaScript>]
-//module Chan =
-//
-//    [<M(MO.NoInlining)>]
-//    let tip ch d =
-//        ch.Balance <- ch.Balance + d
-//
-//    let send ch v =
-//        if ch.Balance < 0 then
-//            let e = ch.Readers.Dequeue ()
-//            Exit.throw e v
-//        else
-//            let t = Transaction.create (fun _ -> Job.result ()) ignore
-//            let e = Exit.create 0 t
-//            ch.Writers.Enqueue (v, e)
-//        tip ch 1
-//
-//    let addReader ch value ex =
-//        tip ch 1
-//        ch.Writers.Enqueue (value, ex)
-//        Transaction.attach ex.Tr ch.Writers
-//
-//    let addWriter ch ex =
-//        tip ch -1
-//        ch.Readers.Enqueue ex
-//        Transaction.attach ex.Tr ch.Readers
-//
-//    let removeReader ch =
-//        tip ch 1
-//        ch.Readers.Dequeue ()
-//
-//    let removeWriter ch =
-//        tip ch -1
-//        ch.Writers.Dequeue ()
-//
-//    [<M(MO.NoInlining)>]
-//    let create () =
-//        {
-//            Balance = 0
-//            Readers = new ChanQueue<Exit<'T>>(fun e -> e.Tr.IsActive.Value)
-//            Writers = new ChanQueue<'T * Exit<unit>>(fun (_, e) -> e.Tr.IsActive.Value)
-//        }
-//
-//[<JavaScript>]
-//[<Proxy(typeof<Hopac.Ch<_>>)>]
-//type Ch<'T> (st: Chan<'T>) =
-//    inherit Alt<'T> ()
-//
-//    let take =
-//        [|{
-//            Poll = fun () -> st.Balance > 0
-//            Suspend = Chan.addWriter st
-//            Sync = fun cont ->
-//                let (value, e) = Chan.removeWriter st
-//                Exit.throw e ()
-//                cont value
-//        }|]
-//
-//    member ch.Chan = st
-//
-//    override alt.Init _ _ =
-//        Job.result take
-//
-//[<JavaScript>]
-//[<Sealed>]
-//type GiveAlt<'T> (ch: Chan<'T>, value: 'T) =
-//    inherit Alt<unit> ()
-//
-//    let give =
-//        [|{
-//            Poll = fun () -> ch.Balance < 0
-//            Suspend = Chan.addReader ch value
-//            Sync = fun cont ->
-//                let e = Chan.removeReader ch
-//                Exit.throw e value
-//                cont ()
-//        }|]
-//
-//    override alt.Init _ _ =
-//        Job.result give
-//
-//[<JavaScript>]
-//[<Proxy "Hopac.Ch, Hopac">]
-//module Ch =
-//    module A = Alt
-//
-//    [<M(MO.NoInlining)>]
-//    let (|Ch|) (ch: Ch<'T>) =
-//        ch.Chan
-//
-//    [<Proxy "Hopac.Ch.Now, Hopac">]
-//    module Now =
-//
-//        [<M(MO.NoInlining)>]
-//        let create () = Ch (Chan.create ())
-//
-//    [<Proxy "Hopac.Ch.Global, Hopac">]
-//    module Global =
-//        let send (Ch chan) v = Chan.send chan v
-//
-//    [<M(MO.NoInlining)>]
-//    let create () =
-//        job { return Now.create () }
-//
-//    [<Proxy "Hopac.Ch.Alt, Hopac">]
-//    module Alt =
-//        let give (Ch chan) value = GiveAlt (chan, value) :> Alt<_>
-//        let take (ch: Ch<'T>) = ch :> Alt<'T>
-//
-//    let give ch v = A.pick (Alt.give ch v)
-//    let take (ch: Ch<'T>) = A.pick ch
-//    let send ch v = job { return Global.send ch v }
-//
-//[<AutoOpen>]
-//[<JavaScript>]
-//[<Proxy "Hopac.TopLevel, Hopac">]
-//module TopLevel =
-//    let job = JobBuilder ()
+// Channels -------------------------------------------------------------------
+
+type Chan<'T> =
+    {
+        Readers : ChanQueue<Exit<'T>>
+        Writers : ChanQueue<'T * Exit<unit>>
+    }
+
+[<JavaScript>]
+module Chan =
+
+    let send ch v =
+        ch.Readers.Clear ()
+        if ch.Readers.IsEmpty then
+            let t = Transaction.create (fun _ -> Job.result ()) ignore
+            let e = Exit.create 0 t
+            ch.Writers.Enqueue (v, e)
+        else
+            let e = ch.Readers.Dequeue ()
+            Exit.throw e v
+
+    let create () =
+        {
+            Readers = new ChanQueue<Exit<'T>>(fun e -> e.Tr.IsActive.Value)
+            Writers = new ChanQueue<'T * Exit<unit>>(fun (_, e) -> e.Tr.IsActive.Value)
+        }
+
+[<JavaScript>]
+[<Proxy(typeof<Hopac.Ch<_>>)>]
+type Ch<'T> (st: Chan<'T>) =
+    inherit Alt<'T> ()
+
+    let take =
+        [|{
+            Poll = fun () ->
+                st.Writers.Clear ()
+                not st.Writers.IsEmpty
+            Suspend = fun ex ->
+                st.Readers.Enqueue ex
+                Transaction.attach ex.Tr st.Readers
+            Sync = fun cont ->
+                let (value, e) = st.Writers.Dequeue ()
+                Exit.throw e ()
+                cont value
+        }|]
+
+    member ch.Chan = st
+
+    override alt.Init _ _ =
+        Job.result take
+
+[<JavaScript>]
+[<Sealed>]
+type GiveAlt<'T> (ch: Chan<'T>, value: 'T) =
+    inherit Alt<unit> ()
+
+    let give =
+        [|{
+            Poll = fun () ->
+                ch.Readers.Clear ()
+                not ch.Readers.IsEmpty
+            Suspend = fun ex ->
+                ch.Writers.Enqueue (value, ex)
+                Transaction.attach ex.Tr ch.Writers
+            Sync = fun cont ->
+                let e = ch.Readers.Dequeue ()
+                Exit.throw e value
+                cont ()
+        }|]
+
+    override alt.Init _ _ =
+        Job.result give
+
+[<Proxy "Hopac.Ch, Hopac">]
+module Ch =
+    module A = Alt
+
+    let ( !++ ) (a: Ch<'T>) = As<C<'T>> a
+    let ( !-- ) (a: C<'T>) = As<Ch<'T>> a
+    let (|Ch|) (ch: C<'T>) = (!--ch).Chan
+
+    [<Proxy "Hopac.Ch.Now, Hopac">]
+    module Now =
+        let create () = !++ Ch(Chan.create ())
+
+    [<Proxy "Hopac.Ch.Global, Hopac">]
+    module Global =
+        let send (Ch chan) v = Chan.send chan v
+
+    let create () =
+        job { return Now.create () }
+
+    [<Proxy "Hopac.Ch.Alt, Hopac">]
+    module Alt =
+        let give (Ch chan) value = !+? GiveAlt(chan, value)
+        let take (ch: C<'T>) = As<A<'T>> ch
+
+    let give ch v = A.pick (Alt.give ch v)
+    let take (ch: C<'T>) = A.pick ch
+    let send ch v = job { return Global.send ch v }
+
+[<AutoOpen>]
+[<JavaScript>]
+[<Proxy "Hopac.TopLevel, Hopac">]
+module TopLevel =
+    let job = As<Hopac.JobBuilder> (JobBuilder ())

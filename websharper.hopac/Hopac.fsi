@@ -11,6 +11,8 @@
 
 namespace WebSharper.Hopac
 
+type internal A<'T> = Hopac.Alt<'T>
+type internal C<'T> = Hopac.Ch<'T>
 type internal J<'T> = Hopac.Job<'T>
 
 module internal Job =
@@ -43,8 +45,6 @@ type JobBuilder with
     member While : (unit -> bool) * J<unit> -> J<unit>
     member Zero : unit -> J<unit>
 
-type internal A<'T> = Hopac.Alt<'T>
-
 module internal Alt =
     val always : 'T -> A<'T>
     val unit : unit -> A<unit>
@@ -64,22 +64,19 @@ module internal Alt =
     val pick : A<'T> -> J<'T>
     val select : seq<A<'T>> -> J<'T>
 
-//type Ch<'T> =
-//    class inherit Alt<'T> end
-//
-//module Ch  =
-//    module Now =
-//        val create : unit -> Ch<'T>
-//    module Alt =
-//        val give : Ch<'T> -> 'T -> Alt<unit>
-//        val take : Ch<'T> -> Alt<'T>
-//    module Global =
-//        val send : Ch<'T> -> 'T -> unit
-//    val create : unit -> Job<Ch<'T>>
-//    val give : Ch<'T> -> 'T -> Job<unit>
-//    val send : Ch<'T> -> 'T -> Job<unit>
-//    val take : Ch<'T> -> Job<'T>
-//
-//[<AutoOpen>]
-//module TopLevel =
-//    val job : JobBuilder
+module internal Ch =
+    module Now =
+        val create : unit -> C<'T>
+    module Alt =
+        val give : C<'T> -> 'T -> A<unit>
+        val take : C<'T> -> A<'T>
+    module Global =
+        val send : C<'T> -> 'T -> unit
+    val create : unit -> J<C<'T>>
+    val give : C<'T> -> 'T -> J<unit>
+    val send : C<'T> -> 'T -> J<unit>
+    val take : C<'T> -> J<'T>
+
+[<AutoOpen>]
+module internal TopLevel =
+    val job : Hopac.JobBuilder
