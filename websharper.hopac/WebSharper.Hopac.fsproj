@@ -58,10 +58,6 @@
     <Compile Include="Executor.fs" />
     <Compile Include="Hopac.fsi" />
     <Compile Include="Hopac.fs" />
-    <Content Include="Main.fs" />
-    <None Include="App.config">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
