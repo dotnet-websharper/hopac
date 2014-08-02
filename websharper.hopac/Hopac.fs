@@ -510,12 +510,20 @@ type GiveAlt<'T> (ch: Chan<'T>, value: 'T) =
     override alt.Init _ _ =
         Job.result give
 
+[<JavaScript>]
 [<Proxy "Hopac.Ch, Hopac">]
 module Ch =
     module A = Alt
 
+    [<Inline "$0">]
+    [<M(MO.NoInlining)>]
     let ( !++ ) (a: Ch<'T>) = As<C<'T>> a
+
+    [<Inline "$0">]
+    [<M(MO.NoInlining)>]
     let ( !-- ) (a: C<'T>) = As<Ch<'T>> a
+
+    [<M(MO.NoInlining)>]
     let (|Ch|) (ch: C<'T>) = (!--ch).Chan
 
     [<Proxy "Hopac.Ch+Now, Hopac">]
