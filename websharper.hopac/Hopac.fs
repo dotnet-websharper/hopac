@@ -190,7 +190,7 @@ type Alt<'T> () =
                     | None ->
                         let tr =
                             selected.Fill
-                            |> Transaction.create (fun v -> job { return cont v})
+                            |> Transaction.create (fun v -> job { return cont v })
                         events
                         |> Array.iteri (fun i ev ->
                             ev.Suspend (Exit.create i tr))
@@ -295,20 +295,25 @@ type WrapAlt<'A,'B> (a: Alt<'A>, f: 'A -> Job<'B>) =
             return Array.map (Branch.mapJob f) br
         }
 
+module Nacks =
+
+    let createAlt (choice: Alt<int>) (pos: int) =
+        let res = IVar ()
+        job {
+            let! c = choice
+            if c <> pos then
+                return res.Fill ()
+        }
+        |> Job.Global.start
+        res :> Alt<_>
+
 [<Sealed>]
 type WithNackAlt<'T> (f: Alt<unit> -> Job<Alt<'T>>) =
     inherit Alt<'T> ()
 
     override alt.Init choice pos =
-        let nack =
-            let e =
-                choice
-                |>> fun c ->
-                    if c <> pos
-                        then AlwaysAlt () :> Alt<_>
-                        else NeverAlt () :> Alt<_>
-            GuardAlt e :> Alt<_>
         job {
+            let nack = Nacks.createAlt choice pos
             let! x = f nack
             return! x.Init choice pos
         }
