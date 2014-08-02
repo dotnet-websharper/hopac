@@ -342,67 +342,45 @@ module Alt =
 
 [<Sealed>]
 type ChanQueue<'T> (isActive: 'T -> bool) =
-
     let mutable qu = Queue<'T> ()
 
+    member q.IsEmpty = qu.Count = 0
     member q.Enqueue (v: 'T) = qu.Enqueue v
     member q.Dequeue () = qu.Dequeue ()
     member q.ToArray () = qu.ToArray ()
 
-    interface IDisposable with
+    /// Drops all inactive items.
+    member q.Clear () =
+        let r = Queue<'T> ()
+        qu.ToArray ()
+        |> Array.iter (fun item ->
+            if isActive item then
+                r.Enqueue item)
+        qu <- r
 
-        /// Drops all inactive items.
-        member q.Dispose () =
-            let r = Queue<'T> ()
-            qu.ToArray ()
-            |> Array.iter (fun item ->
-                if isActive item then
-                    r.Enqueue item)
-            qu <- r
+    interface IDisposable with
+        member q.Dispose () = q.Clear ()
 
 type Chan<'T> =
     {
-        mutable Balance : int
         Readers : ChanQueue<Exit<'T>>
         Writers : ChanQueue<'T * Exit<unit>>
     }
 
 module Chan =
 
-    let tip ch d =
-        ch.Balance <- ch.Balance + d
-
     let send ch v =
-        if ch.Balance < 0 then
-            let e = ch.Readers.Dequeue ()
-            Exit.throw e v
-        else
+        ch.Readers.Clear ()
+        if ch.Readers.IsEmpty then
             let t = Transaction.create (fun _ -> Job.result ()) ignore
             let e = Exit.create 0 t
             ch.Writers.Enqueue (v, e)
-        tip ch 1
-
-    let addReader ch value ex =
-        tip ch 1
-        ch.Writers.Enqueue (value, ex)
-        Transaction.attach ex.Tr ch.Writers
-
-    let addWriter ch ex =
-        tip ch -1
-        ch.Readers.Enqueue ex
-        Transaction.attach ex.Tr ch.Readers
-
-    let removeReader ch =
-        tip ch 1
-        ch.Readers.Dequeue ()
-
-    let removeWriter ch =
-        tip ch -1
-        ch.Writers.Dequeue ()
+        else
+            let e = ch.Readers.Dequeue ()
+            Exit.throw e v
 
     let create () =
         {
-            Balance = 0
             Readers = new ChanQueue<Exit<'T>>(fun e -> e.Tr.IsActive.Value)
             Writers = new ChanQueue<'T * Exit<unit>>(fun (_, e) -> e.Tr.IsActive.Value)
         }
@@ -412,10 +390,14 @@ type Ch<'T> (st: Chan<'T>) =
 
     let take =
         [|{
-            Poll = fun () -> st.Balance > 0
-            Suspend = Chan.addWriter st
+            Poll = fun () ->
+                st.Writers.Clear ()
+                not st.Writers.IsEmpty
+            Suspend = fun ex ->
+                st.Readers.Enqueue ex
+                Transaction.attach ex.Tr st.Readers
             Sync = fun cont ->
-                let (value, e) = Chan.removeWriter st
+                let (value, e) = st.Writers.Dequeue ()
                 Exit.throw e ()
                 cont value
         }|]
@@ -431,10 +413,14 @@ type GiveAlt<'T> (ch: Chan<'T>, value: 'T) =
 
     let give =
         [|{
-            Poll = fun () -> ch.Balance < 0
-            Suspend = Chan.addReader ch value
+            Poll = fun () ->
+                ch.Readers.Clear ()
+                not ch.Readers.IsEmpty
+            Suspend = fun ex ->
+                ch.Writers.Enqueue (value, ex)
+                Transaction.attach ex.Tr ch.Writers
             Sync = fun cont ->
-                let e = Chan.removeReader ch
+                let e = ch.Readers.Dequeue ()
                 Exit.throw e value
                 cont ()
         }|]
