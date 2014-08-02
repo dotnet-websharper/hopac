@@ -351,12 +351,14 @@ type ChanQueue<'T> (isActive: 'T -> bool) =
 
     /// Drops all inactive items.
     member q.Clear () =
-        let r = Queue<'T> ()
-        qu.ToArray ()
-        |> Array.iter (fun item ->
-            if isActive item then
-                r.Enqueue item)
-        qu <- r
+        let items = qu.ToArray ()
+        if Array.exists (isActive >> not) items then
+            let r = Queue<'T> ()
+            qu.ToArray ()
+            |> Array.iter (fun item ->
+                if isActive item then
+                    r.Enqueue item)
+            qu <- r
 
     interface IDisposable with
         member q.Dispose () = q.Clear ()
